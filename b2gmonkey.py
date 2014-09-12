@@ -221,15 +221,13 @@ class B2GMonkey(object):
                                        'orng.script')
         self.adb_device.push(self.script, remote_script)
         self.start_time = time.time()
+        # TODO: Kill remote process on keyboard interrupt
         self.adb_device.shell('%s %s %s' % (orng_path,
                                             self.device_properties['input'],
                                             remote_script))
         self.end_time = time.time()
         self.adb_device.rm(remote_script)
-
-        # Check for crashes
-        # TODO: Detect crash (requires mozrunner release)
-        self.crashed = self.runner.check_for_crashes()
+        self.crashed = self.runner.check_for_crashes(test_name='b2gmonkey')
 
         # Report results to Treeherder
         required_envs = ['TREEHERDER_KEY', 'TREEHERDER_SECRET']
@@ -358,6 +356,22 @@ class B2GMonkey(object):
             job.add_artifact('Job Info', 'json', {'job_details': job_details})
 
         # TODO: Attach crash dumps
+        # if self.crashed:
+        #     crash_dumps = os.listdir(self.crash_dumps_path)
+        #     for dump in crash_dumps:
+        #         filename = os.path.split(dump)[-1]
+        #         try:
+        #             url = self.upload_to_s3(dump)
+        #             job_details.append({
+        #                 'url': url,
+        #                 'value': filename,
+        #                 'content_type': 'link',
+        #                 'title': 'Crash:'})
+        #         except S3UploadError:
+        #             job_details.append({
+        #                 'value': 'Failed to upload %s' % filename,
+        #                 'content_type': 'text',
+        #                 'title': 'Error:'})
 
         job_collection.add(job)
 
