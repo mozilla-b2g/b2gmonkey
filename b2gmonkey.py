@@ -22,7 +22,7 @@ from gaiatest import GaiaApps, GaiaDevice
 from marionette import Marionette
 from mozdevice import ADBDevice
 import mozfile
-from mozlog.structured import formatters, handlers, structuredlog
+from mozlog import structured
 from mozrunner import B2GDeviceRunner
 import mozversion
 import requests
@@ -44,6 +44,10 @@ DEVICE_PROPERTIES = {
         'home': {'x': 160, 'y': 510}}}
 
 
+class B2GMonkeyError(Exception):
+    pass
+
+
 class S3UploadError(Exception):
 
     def __init__(self):
@@ -52,120 +56,62 @@ class S3UploadError(Exception):
 
 class B2GMonkey(object):
 
-    def __init__(self):
-        self.parser = argparse.ArgumentParser(
-            description='Automated monkey testing on Firefox OS')
-        self.parser.add_argument(
-            '--device',
-            dest='device_serial',
-            help='serial id of a device to use for adb',
-            metavar='SERIAL')
-        self.parser.add_argument(
-            '--log-level',
-            default='info',
-            help='log level (default: %(default)s)',
-            metavar='LEVEL')
-        subparsers = self.parser.add_subparsers(title='Commands')
-        generate = subparsers.add_parser(
-            'generate',
-            help='generate an orangutan script for firefox os')
-        generate.add_argument(
-            'script',
-            help='path to write generated orangutan script file')
-        generate.add_argument(
-            '--seed',
-            default=random.random(),
-            help='seed to use (defaults to random)')
-        generate.add_argument(
-            '--steps',
-            default=100000,
-            help='number of steps',
-            metavar='STEPS',
-            type=int)
-        generate.set_defaults(func=self.generate_script)
-        run = subparsers.add_parser(
-            'run',
-            help='run an orangutan script on firefox os')
-        run.add_argument(
-            'script',
-            help='path to orangutan script file')
-        run.add_argument(
-            '--address',
-            default='localhost:2828',
-            help='address of marionette server (default: %(default)s)')
-        run.add_argument(
-            '--symbols',
-            help='path or url containing breakpad symbols')
-        run.add_argument(
-            '--treeherder',
-            default='https://treeherder.mozilla.org/',
-            help='location of treeherder instance (default: %(default)s',
-            metavar='URL')
-        run.set_defaults(func=self.run_script)
-
-    def run(self, args=sys.argv[1:]):
-        args = self.parser.parse_args()
-        self.logger = structuredlog.StructuredLogger('b2gmonkey')
-        handler = handlers.StreamHandler(
-            sys.stdout, formatters.JSONFormatter())
-        self.logger.add_handler(handlers.LogLevelFilter(
-            handler, args.log_level))
-
+    def __init__(self, device_serial=None):
+        self.device_serial = device_serial
+        self.logger = structured.get_default_logger(component='b2gmonkey')
         self.version = mozversion.get_version(
-            dm_type='adb', device_serial=args.device_serial)
-        for k, v in self.version.items():
-            self.logger.debug('%s: %s' % (k, v))
+            dm_type='adb', device_serial=device_serial)
 
-        try:
-            self.device_properties = DEVICE_PROPERTIES[
-                self.version['device_id']]
-        except KeyError:
-            raise Exception('Firefox OS device not found')
+        device_id = self.version.get('device_id')
+        if not device_id:
+            raise B2GMonkeyError('Firefox OS device not found.')
 
-        if not DEVICE_PROPERTIES.get(self.version['device_id']):
-            raise Exception('Unsupported device: \'%s\'' %
-                            self.version['device_id'])
+        self.device_properties = DEVICE_PROPERTIES.get(device_id)
+        if not self.device_properties:
+            raise B2GMonkeyError('Unsupported device: \'%s\'' % device_id)
 
-        self.script = args.script
         self.temp_dir = tempfile.mkdtemp()
-        args.func(args)
-        mozfile.remove(self.temp_dir)
 
-    def generate_script(self, args):
-        self.logger.info('Current seed is: %s' % args.seed)
-        rnd = random.Random(str(args.seed))
+    def __del__(self):
+        if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
+            mozfile.remove(self.temp_dir)
+
+    def generate(self, script, seed=None, steps=10000, **kwargs):
+        seed = seed or random.random()
+        self.logger.info('Current seed is: %s' % seed)
+        rnd = random.Random(str(seed))
         dimensions = self.device_properties['dimensions']
-        steps = []
-        self.logger.info('Generating script with %d steps' % args.steps)
-        for i in range(1, args.steps + 1):
+        _steps = []
+        self.logger.info('Generating script with %d steps' % steps)
+        for i in range(1, steps + 1):
             if i % 1000 == 0:
                 duration = 2000
                 home = self.device_properties['home']
                 if 'key' in home:
-                    steps.append(['keydown', home['key']])
-                    steps.append(['sleep', duration])
-                    steps.append(['keyup', home['key']])
+                    _steps.append(['keydown', home['key']])
+                    _steps.append(['sleep', duration])
+                    _steps.append(['keyup', home['key']])
                 else:
-                    steps.append(['tap', home['x'], home['y'], 1, duration])
+                    _steps.append(['tap', home['x'], home['y'], 1, duration])
                 continue
 
             valid_actions = ['tap', 'drag']
-            if i == 1 or not steps[-1][0] == 'sleep':
+            if i == 1 or not _steps[-1][0] == 'sleep':
                 valid_actions.append('sleep')
             action = rnd.choice(valid_actions)
             if action == 'tap':
-                steps.append([
+                _steps.append([
                     action,
                     rnd.randint(1, dimensions['x']),
                     rnd.randint(1, dimensions['y']),
                     rnd.randint(1, 3),  # repetitions
                     rnd.randint(50, 1000)])  # duration
             elif action == 'sleep':
-                steps.append([
+                _steps.append([
                     action,
                     rnd.randint(100, 3000)])  # duration
             else:
-                steps.append([
+                _steps.append([
                     action,
                     rnd.randint(1, dimensions['x']),  # start
                     rnd.randint(1, dimensions['y']),  # start
@@ -174,19 +120,20 @@ class B2GMonkey(object):
                     rnd.randint(10, 20),  # steps
                     rnd.randint(10, 350)])  # duration
 
-        with open(self.script, 'w+') as f:
-            for step in steps:
+        with open(script, 'w+') as f:
+            for step in _steps:
                 f.write(' '.join([str(x) for x in step]) + '\n')
-        self.logger.info('Script written to: %s' % self.script)
+        self.logger.info('Script written to: %s' % script)
 
-    def run_script(self, args):
+    def run(self, script, address='localhost:2828', symbols=None,
+            treeherder='https://treeherder.mozilla.org/', **kwargs):
         try:
-            host, port = args.address.split(':')
+            host, port = address.split(':')
         except ValueError:
             raise ValueError('--address must be in the format host:port')
 
         # Check that Orangutan is installed
-        self.adb_device = ADBDevice(args.device_serial)
+        self.adb_device = ADBDevice(self.device_serial)
         orng_path = posixpath.join('data', 'local', 'orng')
         if not self.adb_device.exists(orng_path):
             raise Exception('Orangutan not found! Please install it according '
@@ -194,9 +141,9 @@ class B2GMonkey(object):
 
         # TODO: Bug 1038868 - Remove this when Marionette uses B2GDeviceRunner
         self.runner = B2GDeviceRunner(
-            serial=args.device_serial,
+            serial=self.device_serial,
             process_args={'stream': None},
-            symbols_path=args.symbols,
+            symbols_path=symbols,
             logdir=self.temp_dir)
 
         self.runner.start()
@@ -219,7 +166,7 @@ class B2GMonkey(object):
         # Run Orangutan script
         remote_script = posixpath.join(self.adb_device.test_root,
                                        'orng.script')
-        self.adb_device.push(self.script, remote_script)
+        self.adb_device.push(script, remote_script)
         self.start_time = time.time()
         # TODO: Kill remote process on keyboard interrupt
         self.adb_device.shell('%s %s %s' % (orng_path,
@@ -232,7 +179,7 @@ class B2GMonkey(object):
         # Report results to Treeherder
         required_envs = ['TREEHERDER_KEY', 'TREEHERDER_SECRET']
         if all([os.environ.get(v) for v in required_envs]):
-            self.post_to_treeherder(args.treeherder)
+            self.post_to_treeherder(script, treeherder)
         else:
             self.logger.info(
                 'Results will not be posted to Treeherder. Please set the '
@@ -240,7 +187,7 @@ class B2GMonkey(object):
                 'reports: %s' % ', '.join([
                     v for v in required_envs if not os.environ.get(v)]))
 
-    def post_to_treeherder(self, treeherder_url):
+    def post_to_treeherder(self, script, treeherder_url):
         job_collection = TreeherderJobCollection()
         job = job_collection.get_job()
         job.add_group_name(self.device_properties['name'])
@@ -322,9 +269,9 @@ class B2GMonkey(object):
                 'title': 'CI build:'})
 
         # Attach script
-        filename = os.path.split(self.script)[-1]
+        filename = os.path.split(script)[-1]
         try:
-            url = self.upload_to_s3(self.script)
+            url = self.upload_to_s3(script)
             job_details.append({
                 'url': url,
                 'value': filename,
@@ -445,8 +392,59 @@ class B2GMonkey(object):
 
 
 def cli(args=sys.argv[1:]):
-    b2gmonkey = B2GMonkey()
-    b2gmonkey.run(args)
+    parser = argparse.ArgumentParser(
+        description='Automated monkey testing on Firefox OS')
+    parser.add_argument(
+        '--device',
+        dest='device_serial',
+        help='serial id of a device to use for adb',
+        metavar='SERIAL')
+    subparsers = parser.add_subparsers(title='Commands')
+    generate = subparsers.add_parser(
+        'generate',
+        help='generate an orangutan script for firefox os')
+    generate.add_argument(
+        'script',
+        help='path to write generated orangutan script file')
+    generate.add_argument(
+        '--seed',
+        default=random.random(),
+        help='seed to use (defaults to random)')
+    generate.add_argument(
+        '--steps',
+        default=100000,
+        help='number of steps',
+        metavar='STEPS',
+        type=int)
+    generate.set_defaults(func='generate')
+    run = subparsers.add_parser(
+        'run',
+        help='run an orangutan script on firefox os')
+    run.add_argument(
+        'script',
+        help='path to orangutan script file')
+    run.add_argument(
+        '--address',
+        default='localhost:2828',
+        help='address of marionette server (default: %(default)s)')
+    run.add_argument(
+        '--symbols',
+        help='path or url containing breakpad symbols')
+    run.add_argument(
+        '--treeherder',
+        default='https://treeherder.mozilla.org/',
+        help='location of treeherder instance (default: %(default)s',
+        metavar='URL')
+    run.set_defaults(func='run')
+    structured.commandline.add_logging_group(parser)
+
+    args = parser.parse_args()
+    structured.commandline.setup_logging(
+        'b2gmonkey', args, {'mach': sys.stdout})
+
+    b2gmonkey = B2GMonkey(device_serial=args.device_serial)
+    getattr(b2gmonkey, args.func)(**vars(args))
+
 
 if __name__ == '__main__':
     cli()
