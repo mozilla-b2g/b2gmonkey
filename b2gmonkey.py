@@ -188,7 +188,8 @@ class B2GMonkey(object):
         runner = B2GDeviceRunner(
             serial=args.device_serial,
             process_args={'stream': None},
-            symbols_path=args.symbols)
+            symbols_path=args.symbols,
+            logdir=self.temp_dir)
 
         runner.start()
         port = runner.device.setup_port_forwarding(remote_port=port)
@@ -222,9 +223,8 @@ class B2GMonkey(object):
         # TODO: Collect any crash dumps
 
         # Collect logcat
-        logcat = os.path.join(self.temp_dir, 'logcat.txt')
-        with open(logcat, mode='w+') as f:
-            f.writelines(adb_device.get_logcat())
+        logcat = os.path.join(self.temp_dir,
+                              '%s.log' % runner.device.dm._deviceSerial)
         self.logger.info('Logcat stored in: %s' % logcat)
 
         # Report results to Treeherder
@@ -239,9 +239,6 @@ class B2GMonkey(object):
                 'following environment variables to enable Treeherder '
                 'reports: %s' % ', '.join([
                     v for v in required_envs if not os.environ.get(v)]))
-
-        # Remove logcat
-        mozfile.remove(logcat)
 
     def post_to_treeherder(self):
         job_collection = TreeherderJobCollection()
