@@ -5,6 +5,7 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import argparse
+import gzip
 import hashlib
 import os
 import posixpath
@@ -41,6 +42,12 @@ DEVICE_PROPERTIES = {
         'input': '/dev/input/event4',
         'dimensions': {'x': 320, 'y': 510},
         'home': {'x': 160, 'y': 510}}}
+
+
+class S3UploadError(Exception):
+
+    def __init__(self):
+        Exception.__init__(self, 'Error uploading to S3')
 
 
 class B2GMonkey(object):
@@ -119,6 +126,7 @@ class B2GMonkey(object):
             raise Exception('Unsupported device: \'%s\'' %
                             self.version['device_id'])
 
+        self.script = args.script
         self.temp_dir = tempfile.mkdtemp()
         args.func(args)
         mozfile.remove(self.temp_dir)
@@ -166,10 +174,10 @@ class B2GMonkey(object):
                     rnd.randint(10, 20),  # steps
                     rnd.randint(10, 350)])  # duration
 
-        with open(args.script, 'w+') as f:
+        with open(self.script, 'w+') as f:
             for step in steps:
                 f.write(' '.join([str(x) for x in step]) + '\n')
-        self.logger.info('Script written to: %s' % args.script)
+        self.logger.info('Script written to: %s' % self.script)
 
     def run_script(self, args):
         try:
@@ -178,22 +186,23 @@ class B2GMonkey(object):
             raise ValueError('--address must be in the format host:port')
 
         # Check that Orangutan is installed
-        adb_device = ADBDevice(args.device_serial)
+        self.adb_device = ADBDevice(args.device_serial)
         orng_path = posixpath.join('data', 'local', 'orng')
-        if not adb_device.exists(orng_path):
+        if not self.adb_device.exists(orng_path):
             raise Exception('Orangutan not found! Please install it according '
                             'to the documentation.')
 
         # TODO: Bug 1038868 - Remove this when Marionette uses B2GDeviceRunner
-        runner = B2GDeviceRunner(
+        self.runner = B2GDeviceRunner(
             serial=args.device_serial,
             process_args={'stream': None},
             symbols_path=args.symbols,
             logdir=self.temp_dir)
 
-        runner.start()
-        port = runner.device.setup_port_forwarding(remote_port=port)
-        assert runner.device.wait_for_port(port), 'Timed out waiting for port!'
+        self.runner.start()
+        port = self.runner.device.setup_port_forwarding(remote_port=port)
+        assert self.runner.device.wait_for_port(port), \
+            'Timed out waiting for port!'
 
         marionette = Marionette(host=host, port=port)
         marionette.start_session()
@@ -208,31 +217,24 @@ class B2GMonkey(object):
         # TODO: Disable bluetooth, emergency calls, carrier, etc
 
         # Run Orangutan script
-        remote_script = posixpath.join(adb_device.test_root, 'orng.script')
-        adb_device.push(args.script, remote_script)
+        remote_script = posixpath.join(self.adb_device.test_root,
+                                       'orng.script')
+        self.adb_device.push(self.script, remote_script)
         self.start_time = time.time()
-        adb_device.shell('%s %s %s' % (orng_path,
-                                       self.device_properties['input'],
-                                       remote_script))
+        self.adb_device.shell('%s %s %s' % (orng_path,
+                                            self.device_properties['input'],
+                                            remote_script))
         self.end_time = time.time()
-        adb_device.rm(remote_script)
+        self.adb_device.rm(remote_script)
 
         # Check for crashes
         # TODO: Detect crash (requires mozrunner release)
-        self.crashed = runner.check_for_crashes()
-        # TODO: Collect any crash dumps
-
-        # Collect logcat
-        logcat = os.path.join(self.temp_dir,
-                              '%s.log' % runner.device.dm._deviceSerial)
-        self.logger.info('Logcat stored in: %s' % logcat)
+        self.crashed = self.runner.check_for_crashes()
 
         # Report results to Treeherder
         required_envs = ['TREEHERDER_KEY', 'TREEHERDER_SECRET']
         if all([os.environ.get(v) for v in required_envs]):
-            self.treeherder_url = args.treeherder
-            self.artifacts = [args.script, logcat]
-            self.post_to_treeherder()
+            self.post_to_treeherder(args.treeherder)
         else:
             self.logger.info(
                 'Results will not be posted to Treeherder. Please set the '
@@ -240,7 +242,7 @@ class B2GMonkey(object):
                 'reports: %s' % ', '.join([
                     v for v in required_envs if not os.environ.get(v)]))
 
-    def post_to_treeherder(self):
+    def post_to_treeherder(self, treeherder_url):
         job_collection = TreeherderJobCollection()
         job = job_collection.get_job()
         job.add_group_name(self.device_properties['name'])
@@ -252,7 +254,7 @@ class B2GMonkey(object):
         # Determine revision hash from application revision
         revision = self.version['application_changeset']
         project = self.version['application_repository'].split('/')[-1]
-        lookup_url = urljoin(self.treeherder_url,
+        lookup_url = urljoin(treeherder_url,
                              'api/project/%s/revision-lookup/?revision=%s' % (
                                  project, revision))
         self.logger.debug('Getting revision hash from: %s' % lookup_url)
@@ -321,66 +323,111 @@ class B2GMonkey(object):
                 'content_type': 'link',
                 'title': 'CI build:'})
 
-        required_envs = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY']
-        upload_artifacts = all([os.environ.get(v) for v in required_envs])
+        # Attach script
+        filename = os.path.split(self.script)[-1]
+        try:
+            url = self.upload_to_s3(self.script)
+            job_details.append({
+                'url': url,
+                'value': filename,
+                'content_type': 'link',
+                'title': 'Script:'})
+        except S3UploadError:
+            job_details.append({
+                'value': 'Failed to upload %s' % filename,
+                'content_type': 'text',
+                'title': 'Error:'})
 
-        if upload_artifacts:
-            conn = boto.connect_s3()
-            bucket = conn.create_bucket(
-                os.environ.get('S3_UPLOAD_BUCKET', 'b2gmonkey'))
-            bucket.set_acl('public-read')
-
-            for artifact in self.artifacts:
-                if artifact and os.path.exists(artifact):
-                    h = hashlib.sha512()
-                    with open(artifact, 'rb') as f:
-                        for chunk in iter(lambda: f.read(1024 ** 2), b''):
-                            h.update(chunk)
-                    _key = h.hexdigest()
-                    key = bucket.get_key(_key)
-                    if not key:
-                        key = bucket.new_key(_key)
-                    key.set_contents_from_filename(artifact)
-                    key.set_acl('public-read')
-                    blob_url = key.generate_url(expires_in=0,
-                                                query_auth=False)
-                    job_details.append({
-                        'url': blob_url,
-                        'value': os.path.split(artifact)[-1],
-                        'content_type': 'link',
-                        'title': 'Artifact:'})
-                    self.logger.info('Artifact %s uploaded to: %s' % (
-                        artifact, blob_url))
-        else:
-            self.logger.info(
-                'Artifacts will not be included with the report. Please '
-                'set the following environment variables to enable '
-                'uploading of artifacts: %s' % ', '.join([
-                    v for v in required_envs if not os.environ.get(v)]))
+        # Attach logcat
+        filename = '%s.log' % self.runner.device.dm._deviceSerial
+        path = os.path.join(self.temp_dir, filename)
+        try:
+            url = self.upload_to_s3(path)
+            job_details.append({
+                'url': url,
+                'value': filename,
+                'content_type': 'link',
+                'title': 'Logcat:'})
+        except S3UploadError:
+            job_details.append({
+                'value': 'Failed to upload %s' % filename,
+                'content_type': 'text',
+                'title': 'Error:'})
 
         if job_details:
             job.add_artifact('Job Info', 'json', {'job_details': job_details})
 
+        # TODO: Attach crash dumps
+
         job_collection.add(job)
 
         # Send the collection to Treeherder
-        url = urlparse(self.treeherder_url)
+        url = urlparse(treeherder_url)
         request = TreeherderRequest(
             protocol=url.scheme,
             host=url.hostname,
             project=project,
             oauth_key=os.environ.get('TREEHERDER_KEY'),
             oauth_secret=os.environ.get('TREEHERDER_SECRET'))
-        self.logger.info('Sending results to Treeherder: %s' %
-                         self.treeherder_url)
+        self.logger.info('Sending results to Treeherder: %s' % treeherder_url)
         self.logger.debug('Job collection: %s' %
                           job_collection.to_json())
         response = request.post(job_collection)
         self.logger.debug('Response: %s' % response.read())
         assert response.status == 200, 'Failed to send results!'
         self.logger.info('Results are available to view at: %s' % (
-            urljoin(self.treeherder_url, '/ui/#/jobs?repo=%s&revision=%s' % (
+            urljoin(treeherder_url, '/ui/#/jobs?repo=%s&revision=%s' % (
                 project, revision))))
+
+    def upload_to_s3(self, path):
+        if not hasattr(self, '_s3_bucket'):
+            try:
+                self.logger.debug('Connecting to S3')
+                conn = boto.connect_s3()
+                bucket = os.environ.get('S3_UPLOAD_BUCKET', 'b2gmonkey')
+                self.logger.debug('Creating bucket: %s' % bucket)
+                self._s3_bucket = conn.create_bucket(bucket)
+                self._s3_bucket.set_acl('public-read')
+            except boto.exception.NoAuthHandlerFound:
+                self.logger.info(
+                    'Please set the following environment variables to enable '
+                    'uploading of artifacts: %s' % ', '.join([v for v in [
+                        'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'] if not
+                        os.environ.get(v)]))
+                raise S3UploadError()
+            except boto.exception.S3ResponseError as e:
+                self.logger.warning('Upload to S3 failed: %s' % e.message)
+                raise S3UploadError()
+
+        h = hashlib.sha512()
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(1024 ** 2), b''):
+                h.update(chunk)
+        _key = h.hexdigest()
+        key = self._s3_bucket.get_key(_key)
+        if not key:
+            self.logger.debug('Creating key: %s' % _key)
+            key = self._s3_bucket.new_key(_key)
+        ext = os.path.splitext(path)[-1]
+        if ext == '.log':
+            key.set_metadata('Content-Type', 'text/plain')
+
+        with tempfile.NamedTemporaryFile('w+b', suffix=ext) as tf:
+            self.logger.debug('Compressing: %s' % path)
+            with gzip.GzipFile(path, 'wb', fileobj=tf) as gz:
+                with open(path, 'rb') as f:
+                    gz.writelines(f)
+            tf.flush()
+            tf.seek(0)
+            key.set_metadata('Content-Encoding', 'gzip')
+            self.logger.debug('Setting key contents from: %s' % tf.name)
+            key.set_contents_from_filename(tf.name)
+
+        key.set_acl('public-read')
+        blob_url = key.generate_url(expires_in=0,
+                                    query_auth=False)
+        self.logger.info('File %s uploaded to: %s' % (path, blob_url))
+        return blob_url
 
 
 def cli(args=sys.argv[1:]):
