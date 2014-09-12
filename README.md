@@ -24,6 +24,6 @@ If you anticipate modifying b2gmonkey, you can instead:
 
 ## Running
 
-    Usage: b2gmonkey [options]
+Usage: `b2gmonkey [options]`
 
-    For full usage details run `b2gmonkey --help`.
+For full usage details run `b2gmonkey --help`.
