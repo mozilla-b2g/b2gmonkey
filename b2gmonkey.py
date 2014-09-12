@@ -22,6 +22,7 @@ from gaiatest import GaiaApps, GaiaDevice
 from marionette import Marionette
 from mozdevice import ADBDevice
 import mozfile
+import mozlog
 from mozlog import structured
 from mozrunner import B2GDeviceRunner
 import mozversion
@@ -58,7 +59,11 @@ class B2GMonkey(object):
 
     def __init__(self, device_serial=None):
         self.device_serial = device_serial
-        self.logger = structured.get_default_logger(component='b2gmonkey')
+
+        self._logger = structured.get_default_logger(component='b2gmonkey')
+        if not self._logger:
+            self._logger = mozlog.getLogger('mozversion')
+
         self.version = mozversion.get_version(
             dm_type='adb', device_serial=device_serial)
 
@@ -78,11 +83,11 @@ class B2GMonkey(object):
 
     def generate(self, script, seed=None, steps=10000, **kwargs):
         seed = seed or random.random()
-        self.logger.info('Current seed is: %s' % seed)
+        self._logger.info('Current seed is: %s' % seed)
         rnd = random.Random(str(seed))
         dimensions = self.device_properties['dimensions']
         _steps = []
-        self.logger.info('Generating script with %d steps' % steps)
+        self._logger.info('Generating script with %d steps' % steps)
         for i in range(1, steps + 1):
             if i % 1000 == 0:
                 duration = 2000
@@ -123,7 +128,7 @@ class B2GMonkey(object):
         with open(script, 'w+') as f:
             for step in _steps:
                 f.write(' '.join([str(x) for x in step]) + '\n')
-        self.logger.info('Script written to: %s' % script)
+        self._logger.info('Script written to: %s' % script)
 
     def run(self, script, address='localhost:2828', symbols=None,
             treeherder='https://treeherder.mozilla.org/', **kwargs):
@@ -181,7 +186,7 @@ class B2GMonkey(object):
         if all([os.environ.get(v) for v in required_envs]):
             self.post_to_treeherder(script, treeherder)
         else:
-            self.logger.info(
+            self._logger.info(
                 'Results will not be posted to Treeherder. Please set the '
                 'following environment variables to enable Treeherder '
                 'reports: %s' % ', '.join([
@@ -202,7 +207,7 @@ class B2GMonkey(object):
         lookup_url = urljoin(treeherder_url,
                              'api/project/%s/revision-lookup/?revision=%s' % (
                                  project, revision))
-        self.logger.debug('Getting revision hash from: %s' % lookup_url)
+        self._logger.debug('Getting revision hash from: %s' % lookup_url)
         response = requests.get(lookup_url)
         response.raise_for_status()
         assert response.json(), 'Unable to determine revision hash for %s. ' \
@@ -330,34 +335,34 @@ class B2GMonkey(object):
             project=project,
             oauth_key=os.environ.get('TREEHERDER_KEY'),
             oauth_secret=os.environ.get('TREEHERDER_SECRET'))
-        self.logger.info('Sending results to Treeherder: %s' % treeherder_url)
-        self.logger.debug('Job collection: %s' %
-                          job_collection.to_json())
+        self._logger.info('Sending results to Treeherder: %s' % treeherder_url)
+        self._logger.debug('Job collection: %s' %
+                           job_collection.to_json())
         response = request.post(job_collection)
-        self.logger.debug('Response: %s' % response.read())
+        self._logger.debug('Response: %s' % response.read())
         assert response.status == 200, 'Failed to send results!'
-        self.logger.info('Results are available to view at: %s' % (
+        self._logger.info('Results are available to view at: %s' % (
             urljoin(treeherder_url, '/ui/#/jobs?repo=%s&revision=%s' % (
                 project, revision))))
 
     def upload_to_s3(self, path):
         if not hasattr(self, '_s3_bucket'):
             try:
-                self.logger.debug('Connecting to S3')
+                self._logger.debug('Connecting to S3')
                 conn = boto.connect_s3()
                 bucket = os.environ.get('S3_UPLOAD_BUCKET', 'b2gmonkey')
-                self.logger.debug('Creating bucket: %s' % bucket)
+                self._logger.debug('Creating bucket: %s' % bucket)
                 self._s3_bucket = conn.create_bucket(bucket)
                 self._s3_bucket.set_acl('public-read')
             except boto.exception.NoAuthHandlerFound:
-                self.logger.info(
+                self._logger.info(
                     'Please set the following environment variables to enable '
                     'uploading of artifacts: %s' % ', '.join([v for v in [
                         'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'] if not
                         os.environ.get(v)]))
                 raise S3UploadError()
             except boto.exception.S3ResponseError as e:
-                self.logger.warning('Upload to S3 failed: %s' % e.message)
+                self._logger.warning('Upload to S3 failed: %s' % e.message)
                 raise S3UploadError()
 
         h = hashlib.sha512()
@@ -367,27 +372,27 @@ class B2GMonkey(object):
         _key = h.hexdigest()
         key = self._s3_bucket.get_key(_key)
         if not key:
-            self.logger.debug('Creating key: %s' % _key)
+            self._logger.debug('Creating key: %s' % _key)
             key = self._s3_bucket.new_key(_key)
         ext = os.path.splitext(path)[-1]
         if ext == '.log':
             key.set_metadata('Content-Type', 'text/plain')
 
         with tempfile.NamedTemporaryFile('w+b', suffix=ext) as tf:
-            self.logger.debug('Compressing: %s' % path)
+            self._logger.debug('Compressing: %s' % path)
             with gzip.GzipFile(path, 'wb', fileobj=tf) as gz:
                 with open(path, 'rb') as f:
                     gz.writelines(f)
             tf.flush()
             tf.seek(0)
             key.set_metadata('Content-Encoding', 'gzip')
-            self.logger.debug('Setting key contents from: %s' % tf.name)
+            self._logger.debug('Setting key contents from: %s' % tf.name)
             key.set_contents_from_filename(tf.name)
 
         key.set_acl('public-read')
         blob_url = key.generate_url(expires_in=0,
                                     query_auth=False)
-        self.logger.info('File %s uploaded to: %s' % (path, blob_url))
+        self._logger.info('File %s uploaded to: %s' % (path, blob_url))
         return blob_url
 
 
