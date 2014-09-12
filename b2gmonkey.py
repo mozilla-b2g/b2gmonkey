@@ -231,7 +231,7 @@ class B2GMonkey(object):
 
         # Report results to Treeherder
         required_envs = ['TREEHERDER_KEY', 'TREEHERDER_SECRET']
-        if all([os.environ.get(v) for v in [required_envs]]):
+        if all([os.environ.get(v) for v in required_envs]):
             self.treeherder_url = args.treeherder
             self.artifacts = [args.script, logcat]
             self.post_to_treeherder()
