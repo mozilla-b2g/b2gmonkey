@@ -18,7 +18,7 @@ import uuid
 
 import boto
 from gaiatest import GaiaApps, GaiaDevice
-from marionette import expected, By, Marionette, Wait
+from marionette import Marionette
 from mozdevice import ADBDevice
 import mozfile
 from mozlog.structured import formatters, handlers, structuredlog
@@ -198,10 +198,8 @@ class B2GMonkey(object):
         marionette.start_session()
 
         # Prepare device
-        # TODO: Use GaiaDevice.wait_for_b2g_ready (requires gaiatest release)
-        Wait(marionette, timeout=60).until(expected.element_present(
-            By.CSS_SELECTOR, '#homescreen[loading-state=false]'))
         gaia_device = GaiaDevice(marionette)
+        gaia_device.wait_for_b2g_ready()
         gaia_device.unlock()
         gaia_apps = GaiaApps(marionette)
         gaia_apps.kill_all()
