@@ -62,7 +62,7 @@ class B2GMonkey(object):
 
         self._logger = structured.get_default_logger(component='b2gmonkey')
         if not self._logger:
-            self._logger = mozlog.getLogger('mozversion')
+            self._logger = mozlog.getLogger('b2gmonkey')
 
         self.version = mozversion.get_version(
             dm_type='adb', device_serial=device_serial)
