@@ -173,7 +173,7 @@ class B2GMonkey(object):
 
         # Prepare device
         gaia_device = GaiaDevice(marionette)
-        gaia_device.wait_for_b2g_ready()
+        gaia_device.wait_for_b2g_ready(timeout=120)
         gaia_device.unlock()
         gaia_apps = GaiaApps(marionette)
         gaia_apps.kill_all()
