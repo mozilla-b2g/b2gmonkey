@@ -83,6 +83,9 @@ class B2GMonkey(object):
             self.device_properties.update(DEVICE_PROPERTIES.get('flame-kk'))
 
         self.temp_dir = tempfile.mkdtemp()
+        self.crash_dumps_path = os.path.join(self.temp_dir, 'crashes')
+        os.mkdir(self.crash_dumps_path)
+        os.environ['MINIDUMP_SAVE_PATH'] = self.crash_dumps_path
 
     def __del__(self):
         if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
@@ -186,7 +189,7 @@ class B2GMonkey(object):
                                             remote_script))
         self.end_time = time.time()
         self.adb_device.rm(remote_script)
-        self.crashed = self.runner.check_for_crashes(test_name='b2gmonkey')
+        self.runner.check_for_crashes(test_name='b2gmonkey')
 
         # Report results to Treeherder
         required_envs = ['TREEHERDER_KEY', 'TREEHERDER_SECRET']
@@ -226,7 +229,7 @@ class B2GMonkey(object):
         job.add_job_guid(str(uuid.uuid4()))
         job.add_product_name('b2g')
         job.add_state('completed')
-        job.add_result(self.crashed and 'testfailed' or 'success')
+        job.add_result(self.runner.crashed and 'testfailed' or 'success')
 
         job.add_submit_timestamp(int(self.start_time))
         job.add_start_timestamp(int(self.start_time))
@@ -314,23 +317,23 @@ class B2GMonkey(object):
         if job_details:
             job.add_artifact('Job Info', 'json', {'job_details': job_details})
 
-        # TODO: Attach crash dumps
-        # if self.crashed:
-        #     crash_dumps = os.listdir(self.crash_dumps_path)
-        #     for dump in crash_dumps:
-        #         filename = os.path.split(dump)[-1]
-        #         try:
-        #             url = self.upload_to_s3(dump)
-        #             job_details.append({
-        #                 'url': url,
-        #                 'value': filename,
-        #                 'content_type': 'link',
-        #                 'title': 'Crash:'})
-        #         except S3UploadError:
-        #             job_details.append({
-        #                 'value': 'Failed to upload %s' % filename,
-        #                 'content_type': 'text',
-        #                 'title': 'Error:'})
+        # Attach crash dumps
+        if self.runner.crashed:
+            crash_dumps = os.listdir(self.crash_dumps_path)
+            for filename in crash_dumps:
+                path = os.path.join(self.crash_dumps_path, filename)
+                try:
+                    url = self.upload_to_s3(path)
+                    job_details.append({
+                        'url': url,
+                        'value': filename,
+                        'content_type': 'link',
+                        'title': 'Crash:'})
+                except S3UploadError:
+                    job_details.append({
+                        'value': 'Failed to upload %s' % filename,
+                        'content_type': 'text',
+                        'title': 'Error:'})
 
         job_collection.add(job)
 
