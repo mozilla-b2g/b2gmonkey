@@ -24,6 +24,8 @@ from mozdevice import ADBDevice
 import mozfile
 import mozlog
 from mozlog import structured
+from mozlog.structured.formatters import TbplFormatter
+from mozlog.structured.handlers import LogLevelFilter, StreamHandler
 from mozrunner import B2GDeviceRunner
 import mozversion
 import requests
@@ -282,6 +284,32 @@ class B2GMonkey(object):
                 'value': ci_url,
                 'content_type': 'link',
                 'title': 'CI build:'})
+
+        # Attach log files
+        print self._logger.handlers
+        handlers = [handler for handler in self._logger.handlers
+                    if isinstance(handler, StreamHandler) and
+                    os.path.exists(handler.stream.name)]
+        for handler in handlers:
+            path = handler.stream.name
+            filename = os.path.split(path)[-1]
+            try:
+                url = self.upload_to_s3(path)
+                job_details.append({
+                    'url': url,
+                    'value': filename,
+                    'content_type': 'link',
+                    'title': 'Log:'})
+                # Add log reference
+                if type(handler.formatter) is TbplFormatter or \
+                        type(handler.formatter) is LogLevelFilter and \
+                        type(handler.formatter.inner) is TbplFormatter:
+                    job.add_log_reference(filename, url)
+            except S3UploadError:
+                job_details.append({
+                    'value': 'Failed to upload %s' % filename,
+                    'content_type': 'text',
+                    'title': 'Error:'})
 
         # Attach script
         filename = os.path.split(script)[-1]
