@@ -37,6 +37,9 @@ DEVICE_PROPERTIES = {
         'input': '/dev/input/event0',
         'dimensions': {'x': 480, 'y': 854},
         'home': {'key': 102}},
+    'flame-kk': {
+        'name': 'Flame KitKat Device Image',
+        'symbol': 'Flame-KK'},
     'msm7627a': {
         'name': 'Buri/Hamachi Device Image',
         'symbol': 'Buri/Hamac',
@@ -74,6 +77,10 @@ class B2GMonkey(object):
         self.device_properties = DEVICE_PROPERTIES.get(device_id)
         if not self.device_properties:
             raise B2GMonkeyError('Unsupported device: \'%s\'' % device_id)
+
+        android_version = self.version.get('device_firmware_version_release')
+        if device_id == 'flame' and android_version == '4.4.2':
+            self.device_properties.update(DEVICE_PROPERTIES.get('flame-kk'))
 
         self.temp_dir = tempfile.mkdtemp()
 
