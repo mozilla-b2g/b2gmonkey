@@ -13,9 +13,10 @@ setup(name='b2gmonkey',
       author_email='dhunt@mozilla.com',
       url='https://github.com/davehunt/b2gmonkey',
       license='Mozilla Public License 2.0 (MPL 2.0)',
+      packages=['b2gmonkey'],
       entry_points={
           'console_scripts': [
-              'b2gmonkey = b2gmonkey:cli']},
+              'b2gmonkey = b2gmonkey.b2gmonkey:cli']},
       install_requires=[
           'boto>=2.32.1',
           'gaiatest>=0.28',
