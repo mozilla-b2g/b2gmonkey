@@ -377,11 +377,14 @@ class B2GMonkey(object):
         self._logger.debug('Job collection: %s' %
                            job_collection.to_json())
         response = request.post(job_collection)
-        self._logger.debug('Response: %s' % response.read())
-        assert response.status == 200, 'Failed to send results!'
-        self._logger.info('Results are available to view at: %s' % (
-            urljoin(treeherder_url, '/ui/#/jobs?repo=%s&revision=%s' % (
-                project, revision))))
+        if response.status == 200:
+            self._logger.debug('Response: %s' % response.read())
+            self._logger.info('Results are available to view at: %s' % (
+                urljoin(treeherder_url, '/ui/#/jobs?repo=%s&revision=%s' % (
+                    project, revision))))
+        else:
+            self._logger.error('Failed to send results to Treeherder! '
+                               'Response: %s' % response.read())
 
     def upload_to_s3(self, path):
         if not hasattr(self, '_s3_bucket'):
