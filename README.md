@@ -14,11 +14,11 @@ with
 
 Installation is simple:
 
-    pip install -e git://github.com/davehunt/b2gmonkey.git#egg=b2gmonkey
+    pip install -e git://github.com/mozilla-b2g/b2gmonkey.git#egg=b2gmonkey
 
 If you anticipate modifying b2gmonkey, you can instead:
 
-    git clone git://github.com/davehunt/b2gmonkey.git
+    git clone git://github.com/mozilla-b2g/b2gmonkey.git
     cd b2gmonkey
     python setup.py develop
 
