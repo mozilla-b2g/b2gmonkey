@@ -210,7 +210,7 @@ class B2GMonkey(object):
         job.add_group_name(self.device_properties['name'])
         job.add_group_symbol(self.device_properties['symbol'])
         job.add_job_name('Orangutan Monkey Script (%s)' %
-                         self.version['device_id'])
+                         self.device_properties.get('symbol'))
         job.add_job_symbol('Om')
 
         # Determine revision hash from application revision
