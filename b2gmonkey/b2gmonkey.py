@@ -292,7 +292,6 @@ class B2GMonkey(object):
                 'title': 'CI build:'})
 
         # Attach log files
-        print self._logger.handlers
         handlers = [handler for handler in self._logger.handlers
                     if isinstance(handler, StreamHandler) and
                     os.path.exists(handler.stream.name)]
