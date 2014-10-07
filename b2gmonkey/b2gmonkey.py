@@ -170,6 +170,11 @@ class B2GMonkey(object):
 
         marionette = Marionette(host=host, port=port)
         marionette.start_session()
+        marionette.set_context(marionette.CONTEXT_CHROME)
+        self.is_debug = marionette.execute_script(
+            'return Components.classes["@mozilla.org/xpcom/debug;1"].'
+            'getService(Components.interfaces.nsIDebug2).isDebugBuild;')
+        marionette.set_context(marionette.CONTEXT_CONTENT)
 
         # Prepare device
         gaia_device = GaiaDevice(marionette)
@@ -241,8 +246,9 @@ class B2GMonkey(object):
         job.add_build_info('b2g', 'b2g-device-image', 'x86')
         job.add_machine_info('b2g', 'b2g-device-image', 'x86')
 
-        # All B2G device builds are currently opt builds
-        job.add_option_collection({'opt': True})
+        job.add_option_collection({
+            'opt': not self.is_debug,
+            'debug': self.is_debug})
 
         date_format = '%d %b %Y %H:%M:%S'
         job_details = [{
