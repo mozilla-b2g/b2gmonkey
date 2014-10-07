@@ -246,9 +246,10 @@ class B2GMonkey(object):
         job.add_build_info('b2g', 'b2g-device-image', 'x86')
         job.add_machine_info('b2g', 'b2g-device-image', 'x86')
 
-        job.add_option_collection({
-            'opt': not self.is_debug,
-            'debug': self.is_debug})
+        if self.is_debug:
+            job.add_option_collection({'debug': True})
+        else:
+            job.add_option_collection({'opt': True})
 
         date_format = '%d %b %Y %H:%M:%S'
         job_details = [{
