@@ -398,8 +398,12 @@ class B2GMonkey(object):
                 self._logger.debug('Connecting to S3')
                 conn = boto.connect_s3()
                 bucket = os.environ.get('S3_UPLOAD_BUCKET', 'b2gmonkey')
-                self._logger.debug('Creating bucket: %s' % bucket)
-                self._s3_bucket = conn.create_bucket(bucket)
+                if conn.lookup(bucket):
+                    self._logger.debug('Getting bucket: %s' % bucket)
+                    self._s3_bucket = conn.get_bucket(bucket)
+                else:
+                    self._logger.debug('Creating bucket: %s' % bucket)
+                    self._s3_bucket = conn.create_bucket(bucket)
                 self._s3_bucket.set_acl('public-read')
             except boto.exception.NoAuthHandlerFound:
                 self._logger.info(
