@@ -143,7 +143,8 @@ class B2GMonkey(object):
         self._logger.info('Script written to: %s' % script)
 
     def run(self, script, address='localhost:2828', symbols=None,
-            treeherder='https://treeherder.mozilla.org/', **kwargs):
+            treeherder='https://treeherder.mozilla.org/', reset=False,
+            **kwargs):
         try:
             host, port = address.split(':')
         except ValueError:
@@ -156,14 +157,17 @@ class B2GMonkey(object):
             raise Exception('Orangutan not found! Please install it according '
                             'to the documentation.')
 
-        # TODO: Bug 1038868 - Remove this when Marionette uses B2GDeviceRunner
         self.runner = B2GDeviceRunner(
             serial=self.device_serial,
             process_args={'stream': None},
             symbols_path=symbols,
             logdir=self.temp_dir)
 
-        self.runner.start()
+        if reset:
+            self.runner.start()
+        else:
+            self.runner.device.connect()
+
         port = self.runner.device.setup_port_forwarding(remote_port=port)
         assert self.runner.device.wait_for_port(port), \
             'Timed out waiting for port!'
@@ -176,12 +180,12 @@ class B2GMonkey(object):
             'getService(Components.interfaces.nsIDebug2).isDebugBuild;')
         marionette.set_context(marionette.CONTEXT_CONTENT)
 
-        # Prepare device
-        gaia_device = GaiaDevice(marionette)
-        gaia_device.wait_for_b2g_ready(timeout=120)
-        gaia_device.unlock()
-        gaia_apps = GaiaApps(marionette)
-        gaia_apps.kill_all()
+        if reset:
+            gaia_device = GaiaDevice(marionette)
+            gaia_device.wait_for_b2g_ready(timeout=120)
+            gaia_device.unlock()
+            gaia_apps = GaiaApps(marionette)
+            gaia_apps.kill_all()
 
         # TODO: Disable bluetooth, emergency calls, carrier, etc
 
@@ -489,8 +493,13 @@ def cli(args=sys.argv[1:]):
     run.add_argument(
         '--treeherder',
         default='https://treeherder.mozilla.org/',
-        help='location of treeherder instance (default: %(default)s',
+        help='location of treeherder instance (default: %(default)s)',
         metavar='URL')
+    run.add_argument(
+        '--reset',
+        action='store_true',
+        default=False,
+        help='reset the target to a clean state')
     run.set_defaults(func='run')
     structured.commandline.add_logging_group(parser)
 
