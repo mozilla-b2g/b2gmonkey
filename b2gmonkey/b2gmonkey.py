@@ -20,6 +20,7 @@ import uuid
 import boto
 from gaiatest import GaiaApps, GaiaDevice
 from marionette import Marionette
+from marionette import MarionetteException
 from mozdevice import ADBDevice
 import mozfile
 import mozlog
@@ -174,32 +175,40 @@ class B2GMonkey(object):
 
         marionette = Marionette(host=host, port=port)
         marionette.start_session()
-        marionette.set_context(marionette.CONTEXT_CHROME)
-        self.is_debug = marionette.execute_script(
-            'return Components.classes["@mozilla.org/xpcom/debug;1"].'
-            'getService(Components.interfaces.nsIDebug2).isDebugBuild;')
-        marionette.set_context(marionette.CONTEXT_CONTENT)
 
-        if reset:
-            gaia_device = GaiaDevice(marionette)
-            gaia_device.wait_for_b2g_ready(timeout=120)
-            gaia_device.unlock()
-            gaia_apps = GaiaApps(marionette)
-            gaia_apps.kill_all()
+        try:
+            marionette.set_context(marionette.CONTEXT_CHROME)
+            self.is_debug = marionette.execute_script(
+                'return Components.classes["@mozilla.org/xpcom/debug;1"].'
+                'getService(Components.interfaces.nsIDebug2).isDebugBuild;')
+            marionette.set_context(marionette.CONTEXT_CONTENT)
 
-        # TODO: Disable bluetooth, emergency calls, carrier, etc
+            if reset:
+                gaia_device = GaiaDevice(marionette)
+                gaia_device.wait_for_b2g_ready(timeout=120)
+                gaia_device.unlock()
+                gaia_apps = GaiaApps(marionette)
+                gaia_apps.kill_all()
 
-        # Run Orangutan script
-        remote_script = posixpath.join(self.adb_device.test_root,
-                                       'orng.script')
-        self.adb_device.push(script, remote_script)
-        self.start_time = time.time()
-        # TODO: Kill remote process on keyboard interrupt
-        self.adb_device.shell('%s %s %s' % (orng_path,
-                                            self.device_properties['input'],
-                                            remote_script))
-        self.end_time = time.time()
-        self.adb_device.rm(remote_script)
+            # TODO: Disable bluetooth, emergency calls, carrier, etc
+
+            # Run Orangutan script
+            remote_script = posixpath.join(self.adb_device.test_root,
+                                           'orng.script')
+            self.adb_device.push(script, remote_script)
+            self.start_time = time.time()
+            # TODO: Kill remote process on keyboard interrupt
+            self.adb_device.shell('%s %s %s' % (orng_path,
+                                                self.device_properties['input'],
+                                                remote_script))
+            self.end_time = time.time()
+            self.adb_device.rm(remote_script)
+        except (MarionetteException, IOError):
+            if self.runner.crashed:
+                # Crash has been detected
+                pass
+            else:
+                raise
         self.runner.check_for_crashes(test_name='b2gmonkey')
 
         # Report results to Treeherder
