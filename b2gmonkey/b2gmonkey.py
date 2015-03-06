@@ -86,9 +86,11 @@ class B2GMonkey(object):
             self.device_properties.update(DEVICE_PROPERTIES.get('flame-kk'))
 
         self.temp_dir = tempfile.mkdtemp()
-        self.crash_dumps_path = os.path.join(self.temp_dir, 'crashes')
-        os.mkdir(self.crash_dumps_path)
-        os.environ['MINIDUMP_SAVE_PATH'] = self.crash_dumps_path
+        if 'MINIDUMP_SAVE_PATH' not in os.environ:
+            self.crash_dumps_path = os.path.join(self.temp_dir, 'crashes')
+            os.environ['MINIDUMP_SAVE_PATH'] = self.crash_dumps_path
+        else:
+            self.crash_dumps_path = os.environ['MINIDUMP_SAVE_PATH']
 
     def __del__(self):
         if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
